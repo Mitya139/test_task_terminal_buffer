@@ -17,11 +17,17 @@ class TerminalBuffer(
     var currentAttributes: TextAttributes = TextAttributes.DEFAULT
         private set
 
+    private var pendingWrap: Boolean = false
+
     init {
         require(width > 0) { "Width must be greater than 0" }
         require(height > 0) { "Height must be greater than 0" }
         require(scrollbackMaxSize >= 0) { "Scrollback max size must be >= 0" }
         screen = MutableList(height) { Line(width) }
+    }
+
+    companion object {
+        private const val TAB_WIDTH = 8
     }
 
     // Attributes
@@ -57,26 +63,31 @@ class TerminalBuffer(
         validateScreenRow(row)
         cursorColumn = column
         cursorRow = row
+        pendingWrap = false
     }
 
     fun moveCursorUp(count: Int = 1) {
         require(count >= 0) { "Count must be >= 0" }
         cursorRow = (cursorRow - count).coerceAtLeast(0)
+        pendingWrap = false
     }
 
     fun moveCursorDown(count: Int = 1) {
         require(count >= 0) { "Count must be >= 0" }
         cursorRow = (cursorRow + count).coerceAtMost(height - 1)
+        pendingWrap = false
     }
 
     fun moveCursorLeft(count: Int = 1) {
         require(count >= 0) { "Count must be >= 0" }
         cursorColumn = (cursorColumn - count).coerceAtLeast(0)
+        pendingWrap = false
     }
 
     fun moveCursorRight(count: Int = 1) {
         require(count >= 0) { "Count must be >= 0" }
         cursorColumn = (cursorColumn + count).coerceAtMost(width - 1)
+        pendingWrap = false
     }
 
     // Editing
@@ -85,31 +96,30 @@ class TerminalBuffer(
         if (text.isEmpty()) return
 
         for (ch in text) {
-            screen[cursorRow].setChar(cursorColumn, ch, currentAttributes)
-            advanceCursorForWrite()
+            when (ch) {
+                '\n' -> lineFeed()
+                '\r' -> carriageReturn()
+                '\t' -> repeat(spacesToNextTabStop()) { writePrintableChar(' ') }
+                else -> if (!ch.isISOControl()) {
+                    writePrintableChar(ch)
+                }
+            }
         }
     }
 
     fun insertText(text: String) {
         if (text.isEmpty()) return
 
-        var row = cursorRow
-        var column = cursorColumn
-
         for (ch in text) {
-            val scrolled = insertCellAt(row, column, Cell(ch, currentAttributes))
-
-            if (scrolled && row > 0) {
-                row--
+            when (ch) {
+                '\n' -> lineFeed()
+                '\r' -> carriageReturn()
+                '\t' -> repeat(spacesToNextTabStop()) { insertPrintableChar(' ') }
+                else -> if (!ch.isISOControl()) {
+                    insertPrintableChar(ch)
+                }
             }
-
-            val nextPosition = getNextCursorPosition(row, column)
-            row = nextPosition.first
-            column = nextPosition.second
         }
-
-        cursorRow = row
-        cursorColumn = column
     }
 
     fun fillLine(row: Int, char: Char?) {
@@ -119,18 +129,26 @@ class TerminalBuffer(
 
     fun insertEmptyLineAtBottom() {
         scrollScreenUp()
+        pendingWrap = false
     }
 
     fun clearScreen() {
         for (line in screen) {
             line.clear()
         }
-        setCursorPosition(0, 0)
+        cursorColumn = 0
+        cursorRow = 0
+        pendingWrap = false
     }
 
     fun clearScreenAndScrollback() {
-        clearScreen()
+        for (line in screen) {
+            line.clear()
+        }
         scrollback.clear()
+        cursorColumn = 0
+        cursorRow = 0
+        pendingWrap = false
     }
 
     // Content access
@@ -163,12 +181,30 @@ class TerminalBuffer(
 
     // Helpers
 
-    private fun advanceCursorForWrite() {
+    private fun writePrintableChar(ch: Char) {
+        applyPendingWrapIfNeeded()
+        screen[cursorRow].setChar(cursorColumn, ch, currentAttributes)
+        advanceCursorAfterPrintable()
+    }
+
+    private fun insertPrintableChar(ch: Char) {
+        applyPendingWrapIfNeeded()
+        insertCellAt(cursorRow, cursorColumn, Cell(ch, currentAttributes))
+        advanceCursorAfterPrintable()
+    }
+
+    private fun advanceCursorAfterPrintable() {
         if (cursorColumn < width - 1) {
             cursorColumn++
-            return
+        } else {
+            pendingWrap = true
         }
+    }
 
+    private fun applyPendingWrapIfNeeded() {
+        if (!pendingWrap) return
+
+        pendingWrap = false
         cursorColumn = 0
 
         if (cursorRow < height - 1) {
@@ -179,7 +215,28 @@ class TerminalBuffer(
         }
     }
 
-    private fun insertCellAt(row: Int, column: Int, cell: Cell): Boolean {
+    private fun lineFeed() {
+        pendingWrap = false
+        cursorColumn = 0
+
+        if (cursorRow < height - 1) {
+            cursorRow++
+        } else {
+            scrollScreenUp()
+            cursorRow = height - 1
+        }
+    }
+
+    private fun carriageReturn() {
+        pendingWrap = false
+        cursorColumn = 0
+    }
+
+    private fun spacesToNextTabStop(): Int {
+        return TAB_WIDTH - (cursorColumn % TAB_WIDTH)
+    }
+
+    private fun insertCellAt(row: Int, column: Int, cell: Cell) {
         var currentRow = row
         var currentColumn = column
         var carry = cell
@@ -190,7 +247,7 @@ class TerminalBuffer(
             carry = displaced
 
             if (carry == Cell.empty()) {
-                return false
+                return
             }
 
             if (currentColumn < width - 1) {
@@ -201,22 +258,12 @@ class TerminalBuffer(
                 if (currentRow < height - 1) {
                     currentRow++
                 } else {
-                    scrollScreenUp()
-                    screen[height - 1].setCell(0, carry)
-                    return true
+                    // Content that overflows past the bottom-right corner is clipped.
+                    return
                 }
             }
         }
     }
-
-    private fun getNextCursorPosition(row: Int, column: Int): Pair<Int, Int> {
-        return when {
-            column < width - 1 -> Pair(row, column + 1)
-            row < height - 1 -> Pair(row + 1, 0)
-            else -> Pair(height - 1, width - 1)
-        }
-    }
-
 
     private fun scrollScreenUp() {
         appendToScrollback(screen.first())
