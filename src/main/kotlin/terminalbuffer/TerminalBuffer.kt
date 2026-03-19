@@ -5,8 +5,8 @@ class TerminalBuffer(
     val height: Int,
     val scrollbackMaxSize: Int
 ) {
-    private val screen: MutableList<Line>
-    private val scrollback: MutableList<Line> = mutableListOf()
+    private val screen: ArrayDeque<Line>
+    private val scrollback: ArrayDeque<Line> = ArrayDeque()
 
     var cursorColumn: Int = 0
         private set
@@ -23,7 +23,11 @@ class TerminalBuffer(
         require(width > 0) { "Width must be greater than 0" }
         require(height > 0) { "Height must be greater than 0" }
         require(scrollbackMaxSize >= 0) { "Scrollback max size must be >= 0" }
-        screen = MutableList(height) { Line(width) }
+
+        screen = ArrayDeque()
+        repeat(height) {
+            screen.addLast(Line(width))
+        }
     }
 
     companion object {
@@ -122,9 +126,8 @@ class TerminalBuffer(
         }
     }
 
-    fun fillLine(row: Int, char: Char?) {
-        validateScreenRow(row)
-        screen[row].fill(char, currentAttributes)
+    fun fillLine(char: Char?) {
+        screen[cursorRow].fill(char, currentAttributes)
     }
 
     fun insertEmptyLineAtBottom() {
@@ -172,7 +175,10 @@ class TerminalBuffer(
     }
 
     fun getAllContentAsString(): String {
-        return (scrollback + screen).joinToString(separator = "\n") { it.asString() }
+        return scrollback
+            .asSequence()
+            .plus(screen.asSequence())
+            .joinToString(separator = "\n") { it.asString() }
     }
 
     fun getScrollbackSize(): Int {
@@ -246,7 +252,7 @@ class TerminalBuffer(
             screen[currentRow].setCell(currentColumn, carry)
             carry = displaced
 
-            if (carry == Cell.empty()) {
+            if (carry.char == null) {
                 return
             }
 
@@ -266,9 +272,8 @@ class TerminalBuffer(
     }
 
     private fun scrollScreenUp() {
-        appendToScrollback(screen.first())
-        screen.removeAt(0)
-        screen.add(Line(width))
+        appendToScrollback(screen.removeFirst())
+        screen.addLast(Line(width))
     }
 
     private fun resolveLine(globalRow: Int): Line {
@@ -290,10 +295,10 @@ class TerminalBuffer(
         }
 
         if (scrollback.size == scrollbackMaxSize) {
-            scrollback.removeAt(0)
+            scrollback.removeFirst()
         }
 
-        scrollback.add(line.copyOf())
+        scrollback.addLast(line.copyOf())
     }
 
     private fun validateScreenRow(row: Int) {

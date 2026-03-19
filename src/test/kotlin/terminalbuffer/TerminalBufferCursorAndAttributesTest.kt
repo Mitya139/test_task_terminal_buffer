@@ -102,14 +102,15 @@ class TerminalBufferCursorAndAttributesTest {
     }
 
     @Test
-    fun fillLineUsesCurrentAttributes() {
+    fun fillLineUsesCurrentAttributesAtCursorRow() {
         val buffer = TerminalBuffer(width = 4, height = 2, scrollbackMaxSize = 10)
 
+        buffer.setCursorPosition(column = 0, row = 1)
         buffer.setForeground(TerminalColor.YELLOW)
         buffer.setBackground(TerminalColor.BLUE)
         buffer.setBold(true)
 
-        buffer.fillLine(row = 1, char = '#')
+        buffer.fillLine(char = '#')
 
         assertEquals("####", buffer.getLineAsString(1))
 
