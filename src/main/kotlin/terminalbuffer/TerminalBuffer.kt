@@ -53,8 +53,10 @@ class TerminalBuffer(
     // Cursor
 
     fun setCursorPosition(column: Int, row: Int) {
-        cursorColumn = column.coerceIn(0, width - 1)
-        cursorRow = row.coerceIn(0, height - 1)
+        validateColumn(column)
+        validateScreenRow(row)
+        cursorColumn = column
+        cursorRow = row
     }
 
     fun moveCursorUp(count: Int = 1) {
