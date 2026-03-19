@@ -93,9 +93,7 @@ class TerminalBuffer(
     }
 
     fun insertEmptyLineAtBottom() {
-        appendToScrollback(screen.first())
-        screen.removeAt(0)
-        screen.add(Line(width))
+        scrollScreenUp()
     }
 
     fun clearScreen() {
@@ -139,6 +137,12 @@ class TerminalBuffer(
     }
 
     // Helpers
+
+    private fun scrollScreenUp() {
+        appendToScrollback(screen.first())
+        screen.removeAt(0)
+        screen.add(Line(width))
+    }
 
     private fun resolveLine(globalRow: Int): Line {
         val totalLines = scrollback.size + screen.size
