@@ -80,11 +80,34 @@ class TerminalBuffer(
     // Editing
 
     fun writeText(text: String) {
-        // TODO: overwrite mode with wrapping and scrolling
+        if (text.isEmpty()) return
+
+        for (ch in text) {
+            screen[cursorRow].setChar(cursorColumn, ch, currentAttributes)
+            advanceCursorForWrite()
+        }
     }
 
     fun insertText(text: String) {
-        // TODO: insert mode with shifting and wrapping
+        if (text.isEmpty()) return
+
+        var row = cursorRow
+        var column = cursorColumn
+
+        for (ch in text) {
+            val scrolled = insertCellAt(row, column, Cell(ch, currentAttributes))
+
+            if (scrolled && row > 0) {
+                row--
+            }
+
+            val nextPosition = getNextCursorPosition(row, column)
+            row = nextPosition.first
+            column = nextPosition.second
+        }
+
+        cursorRow = row
+        cursorColumn = column
     }
 
     fun fillLine(row: Int, char: Char?) {
@@ -137,6 +160,61 @@ class TerminalBuffer(
     }
 
     // Helpers
+
+    private fun advanceCursorForWrite() {
+        if (cursorColumn < width - 1) {
+            cursorColumn++
+            return
+        }
+
+        cursorColumn = 0
+
+        if (cursorRow < height - 1) {
+            cursorRow++
+        } else {
+            scrollScreenUp()
+            cursorRow = height - 1
+        }
+    }
+
+    private fun insertCellAt(row: Int, column: Int, cell: Cell): Boolean {
+        var currentRow = row
+        var currentColumn = column
+        var carry = cell
+
+        while (true) {
+            val displaced = screen[currentRow].getCell(currentColumn)
+            screen[currentRow].setCell(currentColumn, carry)
+            carry = displaced
+
+            if (carry == Cell.empty()) {
+                return false
+            }
+
+            if (currentColumn < width - 1) {
+                currentColumn++
+            } else {
+                currentColumn = 0
+
+                if (currentRow < height - 1) {
+                    currentRow++
+                } else {
+                    scrollScreenUp()
+                    screen[height - 1].setCell(0, carry)
+                    return true
+                }
+            }
+        }
+    }
+
+    private fun getNextCursorPosition(row: Int, column: Int): Pair<Int, Int> {
+        return when {
+            column < width - 1 -> Pair(row, column + 1)
+            row < height - 1 -> Pair(row + 1, 0)
+            else -> Pair(height - 1, width - 1)
+        }
+    }
+
 
     private fun scrollScreenUp() {
         appendToScrollback(screen.first())
